@@ -9,6 +9,7 @@ and setup_cmd = {
   id_to_fd_map : (string * int option) list;
   syslog_stdout : syslog_stdout_t;
   redirect_stderr_to_stdout : bool;
+  post_script : string list;
 } 
 
 and setup_response = {

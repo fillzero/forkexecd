@@ -17,6 +17,7 @@ type state_t = {
 	id_to_fd_map : (string * int option) list;
 	syslog_stdout : syslog_stdout_t;
 	redirect_stderr_to_stdout : bool;
+	post_script : string list;
 	ids_received : (string * Unix.file_descr) list;
 	fd_sock2 : Unix.file_descr option;
 	finished : bool;
@@ -238,28 +239,49 @@ let run state comms_sock fd_sock fd_sock_path =
 			end
 			| _ -> ();
 
-			(* At this point we know that the child is still running - set up a signal
-			 * handler to catch it exiting. *)
-			Sys.set_signal Sys.sigchld
-				(Sys.Signal_handle
-					(fun signum -> handle_sigchld comms_sock args result signum));
+			match state.post_script with
+			| [] ->
+				begin
+				(* At this point we know that the child is still running - set up a signal
+				 * handler to catch it exiting. *)
+				Sys.set_signal Sys.sigchld
+					(Sys.Signal_handle
+						(fun signum -> handle_sigchld comms_sock args result signum));
 
-			(* Unblock SIGCHLD so that the handler comes into effect. *)
-			let (_ : int list) = Unix.sigprocmask Unix.SIG_UNBLOCK [Sys.sigchld] in
+				(* Unblock SIGCHLD so that the handler comes into effect. *)
+				let (_ : int list) = Unix.sigprocmask Unix.SIG_UNBLOCK [Sys.sigchld] in
 
-			(* While the signal handler watches for the child to exit, we wait for the
-			 * client to send us Dontwaitpid, which signals it won't ever want to
-			 * waitpid the child. If this is received we can exit, and the child will
-			 * continue with init as its parent. *)
-			let rec wait_for_dontwaitpid () =
-				match Fecomms.read_raw_rpc comms_sock with
-				| Fe.Dontwaitpid -> begin
-					Unix.close comms_sock;
-					exit 0
+				(* While the signal handler watches for the child to exit, we wait for the
+				 * client to send us Dontwaitpid, which signals it won't ever want to
+				 * waitpid the child. If this is received we can exit, and the child will
+				 * continue with init as its parent. *)
+				let rec wait_for_dontwaitpid () =
+					match Fecomms.read_raw_rpc comms_sock with
+					| Fe.Dontwaitpid -> begin
+						Unix.close comms_sock;
+						exit 0
+					end
+					| _ -> wait_for_dontwaitpid ()
+				in
+				wait_for_dontwaitpid ()
+				end;
+			| executable::_ ->
+				begin
+				(* Close socket and wait child *)
+				Unix.close comms_sock;
+				let (child_pid, status) = Unix.wait () in
+				if child_pid = result then begin
+					match status with
+					| Unix.WEXITED n ->
+						();
+					| Unix.WSTOPPED n ->
+						();
+					| Unix.WSIGNALED n ->
+						Unix.execve executable (Array.of_list state.post_script) (Array.of_list state.env);                                      
+				end;
+
+				exit 0;
 				end
-				| _ -> wait_for_dontwaitpid ()
-			in
-			wait_for_dontwaitpid ()
 		end
 	with
 		| Cancelled ->

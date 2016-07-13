@@ -100,7 +100,7 @@ type syslog_stdout_t =
 
 (** Safe function which forks a command, closing all fds except a whitelist and
     having performed some fd operations in the child *)
-let safe_close_and_exec ?env stdin stdout stderr (fds: (string * Unix.file_descr) list) ?(syslog_stdout=NoSyslogging) ?(redirect_stderr_to_stdout = false)
+let safe_close_and_exec ?env stdin stdout stderr (fds: (string * Unix.file_descr) list) ?(syslog_stdout=NoSyslogging) ?(redirect_stderr_to_stdout = false) ?post_script
     (cmd: string) (args: string list) =
 
   let sock = Fecomms.open_unix_domain_sock_client "/var/xapi/forker/main" in
@@ -137,12 +137,16 @@ let safe_close_and_exec ?env stdin stdout stderr (fds: (string * Unix.file_descr
       |	Some e -> e
       | None -> [| "PATH=" ^ (String.concat ":" default_path) |]
     in
+    let post_script = match post_script with
+      | Some p -> p
+      | None -> [||]
+    in
     let syslog_stdout = match syslog_stdout with
       | NoSyslogging -> {Fe.enabled=false; Fe.key=None}
       | Syslog_DefaultKey -> {Fe.enabled=true; Fe.key=None}
       | Syslog_WithKey k -> {Fe.enabled=true; Fe.key=Some k}
     in
-    Fecomms.write_raw_rpc sock (Fe.Setup {Fe.cmdargs=(cmd::args); env=(Array.to_list env); id_to_fd_map = id_to_fd_map; syslog_stdout = syslog_stdout; redirect_stderr_to_stdout = redirect_stderr_to_stdout});
+    Fecomms.write_raw_rpc sock (Fe.Setup {Fe.cmdargs=(cmd::args); env=(Array.to_list env); id_to_fd_map = id_to_fd_map; syslog_stdout = syslog_stdout; redirect_stderr_to_stdout = redirect_stderr_to_stdout; post_script=(Array.to_list post_script)});
 
     let response = Fecomms.read_raw_rpc sock in
 
